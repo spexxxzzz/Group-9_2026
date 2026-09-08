@@ -19,6 +19,11 @@ export const interviewsSchema: CollectionSchema = {
     { name: 'userId', storage: 'text', interpretation: 'plain', userBound: true, immutable: true, required: true },
     { name: 'role', storage: 'text', interpretation: 'plain', required: true },
     { name: 'jobDescription', storage: 'text', interpretation: 'plain' },
+    // The original file stays in the browser. We retain only its extracted text,
+    // and only after the candidate has explicitly opted into tailored questions.
+    { name: 'resumeText', storage: 'text', interpretation: 'plain' },
+    { name: 'resumeFileName', storage: 'text', interpretation: 'plain' },
+    { name: 'resumeFollowupConsent', storage: 'text', interpretation: { kind: 'json' } },
     {
       name: 'interviewType',
       storage: 'text',

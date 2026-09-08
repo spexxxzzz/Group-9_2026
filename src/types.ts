@@ -15,6 +15,11 @@ export interface Interview {
   userId: string
   role: string
   jobDescription?: string
+  /** Extracted locally from an opted-in resume; the source file is never stored. */
+  resumeText?: string
+  resumeFileName?: string
+  /** Explicit candidate permission to use resume context for this interview. */
+  resumeFollowupConsent?: boolean
   interviewType: InterviewType
   difficulty: Difficulty
   // Chosen interviewer (Tavus stock replica). Empty → auto-picked at provision.
@@ -68,6 +73,8 @@ export interface Report {
   weaknesses?: string[]
   /** Optional Raven camera / delivery observations, phrased as coaching. */
   nonVerbalFeedback?: string
+  /** Optional coaching that relates interview evidence to an opted-in resume. */
+  resumeFeedback?: string
   summary?: string
   /** false after the fast summary pass; true once the detailed breakdown lands. */
   detailed?: boolean

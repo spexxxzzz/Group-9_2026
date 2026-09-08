@@ -159,6 +159,7 @@ interface DetailResult {
   strengths: string[]
   weaknesses: string[]
   nonVerbalFeedback?: string
+  resumeFeedback?: string
   summary: string
 }
 
@@ -174,6 +175,8 @@ interface ScoreInput {
   hintsUsed?: number
   totalHints?: number
   perceptionAnalysis?: string
+  /** Candidate-supplied resume context, only when consent was recorded. */
+  resumeText?: string
 }
 
 /** Coding-only: tell the scorer that leaning on hints should cost points. */
@@ -247,6 +250,9 @@ function userPromptFor(input: ScoreInput): string {
       : ''
   return [
     input.jobDescription.trim() ? `Job description:\n${input.jobDescription.trim()}\n` : '',
+    input.resumeText?.trim()
+      ? `Candidate-provided resume context (the candidate explicitly opted in; use only for relevant, evidence-based coaching):\n${input.resumeText.trim()}\n`
+      : '',
     problemBlock,
     'Interview transcript:',
     transcriptToText(input.turns),
@@ -319,10 +325,14 @@ async function detailedFeedback(env: Env, ctx: JobContext, input: ScoreInput): P
     '  "strengths": [string, ...],',
     '  "weaknesses": [string, ...],',
     '  "nonVerbalFeedback": string,',
+    '  "resumeFeedback": string,',
     '  "summary": string',
     '}',
     "For each interviewer question, summarize the candidate answer, score it, give pointed feedback, and write a stronger sample answer in the candidate's voice.",
     'Only provide nonVerbalFeedback when Raven supplied an observation. Keep it to 1-2 neutral, actionable sentences about camera presence or delivery; otherwise return an empty string.',
+    input.resumeText?.trim()
+      ? 'Provide resumeFeedback as 1-2 neutral, evidence-based coaching sentences that connect what the candidate said in the interview to skills or experience they stated in the opted-in resume. Never infer protected or personal characteristics, and do not treat a resume claim as proof. If the transcript does not support a useful connection, return an empty string.'
+      : 'Return an empty string for resumeFeedback because no resume context was supplied.',
   ].join('\n')
 
   const { text } = await generateText({
@@ -338,6 +348,7 @@ async function detailedFeedback(env: Env, ctx: JobContext, input: ScoreInput): P
     strengths: toStringArray(parsed.strengths),
     weaknesses: toStringArray(parsed.weaknesses),
     nonVerbalFeedback: typeof parsed.nonVerbalFeedback === 'string' ? parsed.nonVerbalFeedback.trim() || undefined : undefined,
+    resumeFeedback: typeof parsed.resumeFeedback === 'string' ? parsed.resumeFeedback.trim() || undefined : undefined,
     summary: typeof parsed.summary === 'string' ? parsed.summary : '',
   }
 }
@@ -410,6 +421,8 @@ export async function runJob(job: Job, ctx: JobContext, env: Env): Promise<unkno
         problem?: string
         hints?: string[]
         hintsUsed?: number
+        resumeText?: string
+        resumeFollowupConsent?: boolean
       }>
     }>(env, env.OWNER_USER_ID || 'system', 'records.get', {
       collection: 'interviews',
@@ -428,6 +441,7 @@ export async function runJob(job: Job, ctx: JobContext, env: Env): Promise<unkno
       problem: interview.data.problem,
       hintsUsed: interview.data.hintsUsed,
       totalHints: interview.data.hints?.length,
+      resumeText: interview.data.resumeFollowupConsent ? interview.data.resumeText : undefined,
     }
 
     // Idempotent across retries: if a (partial) report already exists, reuse
@@ -506,6 +520,7 @@ export async function runJob(job: Job, ctx: JobContext, env: Env): Promise<unkno
         strengths: detail.strengths,
         weaknesses: detail.weaknesses,
         nonVerbalFeedback: detail.nonVerbalFeedback,
+        resumeFeedback: detail.resumeFeedback,
         summary: detail.summary || undefined,
         detailed: true,
       },

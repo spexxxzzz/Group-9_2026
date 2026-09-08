@@ -29,6 +29,7 @@ export const reportsSchema: CollectionSchema = {
     { name: 'strengths', storage: 'text', interpretation: { kind: 'json' } },
     { name: 'weaknesses', storage: 'text', interpretation: { kind: 'json' } },
     { name: 'nonVerbalFeedback', storage: 'text', interpretation: 'plain' },
+    { name: 'resumeFeedback', storage: 'text', interpretation: 'plain' },
     { name: 'summary', storage: 'text', interpretation: 'plain' },
   ],
   permissions: {

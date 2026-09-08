@@ -187,6 +187,13 @@ function ReportView({ interview, report }: { interview: Interview; report: Repor
         </div>
       )}
 
+      {report.resumeFeedback && (
+        <div className="rounded-2xl border border-border bg-card px-5 py-4">
+          <h2 className="text-sm font-semibold text-foreground">Resume-informed feedback</h2>
+          <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{report.resumeFeedback}</p>
+        </div>
+      )}
+
       <Tabs defaultValue="breakdown">
         <TabsList>
           <TabsTrigger value="breakdown">Question breakdown</TabsTrigger>

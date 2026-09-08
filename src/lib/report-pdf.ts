@@ -149,6 +149,10 @@ export function downloadReportPdf({ interview, report }: ReportPdfInput): void {
     heading('Camera and delivery observations')
     paragraph(report.nonVerbalFeedback)
   }
+  if (report.resumeFeedback) {
+    heading('Resume-informed feedback')
+    paragraph(report.resumeFeedback)
+  }
 
   heading('Question-by-question grading')
   if (report.perQuestion?.length) {

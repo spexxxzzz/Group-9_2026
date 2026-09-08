@@ -85,6 +85,9 @@ export default function InterviewLivePage() {
           interviewType: data.interviewType,
           difficulty: data.difficulty,
           jobDescription: data.jobDescription,
+          // Defense in depth: a resume is never forwarded to an AI service
+          // unless this interview row carries explicit candidate consent.
+          resumeText: data.resumeFollowupConsent ? data.resumeText : undefined,
           replicaId: data.replicaId,
         })
         await put(interview.recordId, {

@@ -446,10 +446,16 @@ app.post('/api/gemini/coding-problem', async (c) => {
   if (!auth) return c.json({ success: false, error: 'Sign in required' }, 401)
 
   try {
-    const body = (await c.req.json()) as { role?: unknown; difficulty?: unknown; jobDescription?: unknown }
+    const body = (await c.req.json()) as {
+      role?: unknown
+      difficulty?: unknown
+      jobDescription?: unknown
+      resumeText?: unknown
+    }
     const role = typeof body.role === 'string' ? body.role.trim().slice(0, 120) : ''
     const difficulty = typeof body.difficulty === 'string' ? body.difficulty : ''
     const jobDescription = typeof body.jobDescription === 'string' ? body.jobDescription.trim().slice(0, 12_000) : ''
+    const resumeText = typeof body.resumeText === 'string' ? body.resumeText.trim().slice(0, 12_000) : ''
     if (!role || !CODING_DIFFICULTY[difficulty]) {
       return c.json({ success: false, error: 'A role and valid difficulty are required' }, 400)
     }
@@ -460,6 +466,9 @@ app.post('/api/gemini/coding-problem', async (c) => {
       `DIFFICULTY — calibrate precisely to: ${CODING_DIFFICULTY[difficulty]}`,
       `TOPIC — match it to the role and job description. Bias toward the pattern "${focus}" unless a different pattern clearly fits this role better. For data/analytics roles where the job description implies SQL, a SQL query problem is acceptable instead.`,
       jobDescription ? `Tailor the framing/flavor to this job description:\n${jobDescription}` : 'No job description provided — pick a broadly relevant topic for the role.',
+      resumeText
+        ? `The candidate explicitly opted in to resume-aware tailoring. Use this resume context only to choose a relevant problem theme; do not reproduce it or infer protected/personal characteristics:\n${resumeText}`
+        : '',
       'Base it on a canonical interview-problem archetype, but write a clean, self-contained, original statement in your own words — do not cite a famous problem by name.',
       'The statement MUST include a precise task, 1-2 worked examples with explicit input and output, and constraints. It should be solvable in about 20-30 minutes at the target difficulty.',
       'Return ONLY a JSON object: { "title": string, "statement": string, "hints": [exactly 3 progressive short hints] }.',
