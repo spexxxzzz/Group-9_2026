@@ -21,10 +21,13 @@ export async function extractResumeText(file: File): Promise<string> {
 
   if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
     const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
-    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-      'pdfjs-dist/legacy/build/pdf.worker.mjs',
-      import.meta.url,
-    ).toString()
+    // DeepSpace serves unknown .mjs assets as application/octet-stream. Browser
+    // module workers reject that MIME type, so make a JavaScript Blob URL from
+    // Vite's raw import instead of asking the browser to import the asset URL.
+    const workerSource = (await import('pdfjs-dist/legacy/build/pdf.worker.mjs?raw')).default
+    pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(
+      new Blob([workerSource], { type: 'text/javascript' }),
+    )
 
     const document = await pdfjs.getDocument({
       data: new Uint8Array(await file.arrayBuffer()),
