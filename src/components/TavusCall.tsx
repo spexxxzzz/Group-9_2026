@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { DailyCall } from '@daily-co/daily-js'
-import { remainingConversationSeconds } from '../lib/tavus'
+import { behavioralTimeGuidance, remainingConversationSeconds } from '../lib/tavus'
 
 interface TavusCallProps {
   url: string
@@ -81,11 +81,7 @@ export default function TavusCall(props: TavusCallProps) {
       const bucket = Math.floor(elapsed / 30)
       if (remaining > 0 && joined.current && call.current && bucket !== lastTimeBucket.current) {
         lastTimeBucket.current = bucket
-        const guidance = remaining <= 90
-          ? 'The provider cutoff is close. Do not open a new long story. Briefly acknowledge the answer, invite one candidate question if feasible, and close naturally before time expires.'
-          : remaining <= 150
-            ? 'Check what the first story actually established about the role’s highest-priority competencies. Ask a concise evidence-seeking follow-up or test one uncovered competency; if an answer is long, redirect at the next natural pause.'
-            : 'Use the candidate’s latest answer to probe a high-priority competency from your private role-and-job-description plan. Prefer concrete actions, decisions, outcomes, and reflection over a new generic question.'
+        const guidance = behavioralTimeGuidance(remaining)
         const context = [
           `Live interview time check: ${remaining} seconds remain before Tavus ends this five-minute conversation. Time is measured from conversation creation, not candidate join.`,
           guidance,

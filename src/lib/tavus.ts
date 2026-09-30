@@ -29,6 +29,20 @@ export function remainingConversationSeconds(startedAt: number, durationMinutes:
   return Math.max(0, durationMinutes * 60 - elapsed)
 }
 
+/** Time-aware coaching sent to the interviewer during a behavioral call. */
+export function behavioralTimeGuidance(remainingSeconds: number): string {
+  if (remainingSeconds <= 30) {
+    return 'The provider cutoff is very close. Finish the candidate’s current answer without interrupting. If there is a natural opening and enough time, optionally invite one brief question about the role; otherwise thank them and close. Do not start another long story.'
+  }
+  if (remainingSeconds <= 90) {
+    return 'Keep gathering substantive behavioral evidence. Ask one concise follow-up on a missing action, decision, outcome, or role-relevant competency. Do not move to candidate questions or start wrapping up yet; save a brief optional closing for the final 20–30 seconds.'
+  }
+  if (remainingSeconds <= 150) {
+    return 'Check what the first story actually established about the role’s highest-priority competencies. Ask a concise evidence-seeking follow-up or test one uncovered competency; if an answer is long, redirect at the next natural pause.'
+  }
+  return 'Use the candidate’s latest answer to probe a high-priority competency from your private role-and-job-description plan. Prefer concrete actions, decisions, outcomes, and reflection over a new generic question.'
+}
+
 export interface CodingProblem {
   title: string
   statement: string
@@ -161,13 +175,13 @@ function typeInstructions(type: InterviewType, opts: PromptOpts): string {
       return [
         'This is a five-minute BEHAVIORAL interview. Your goal is to collect enough high-quality evidence to assess how the candidate worked, decided, collaborated, and learned, not to cover a question bank.',
         'Before speaking, form a private interview plan from the target role, seniority, and job description. Identify the two most important behavioral competencies for success in this role and what a strong candidate would demonstrate through past actions and outcomes. If no job description is supplied, infer reasonable role-specific competencies without inventing company requirements. Keep this plan private and revise it as the candidate answers.',
-        'Use the opening to obtain a brief introduction, then spend most of the call on one substantial past-experience example and its most revealing follow-ups. If the first story supplies enough evidence and time allows, test a second important competency. Reserve the closing stretch for a candidate question or a concise wrap-up. This is a flexible evidence plan, not a rigid sequence or script.',
-        'Create fair opportunities for the later feedback rubric to assess answer relevance, clarity, listening, concrete past actions and results, role preparation, and a candidate question. Do not mechanically ask one question per rubric row; use the smallest number of natural questions that reveal useful evidence.',
+        'Use the opening to obtain a brief introduction, then spend most of the call on one substantial past-experience example and its most revealing follow-ups. If the first story supplies enough evidence and time allows, test a second important competency. Keep gathering evidence until the final 20–30 seconds; only then consider a brief closing. This is a flexible evidence plan, not a rigid sequence or script.',
+        'Create fair opportunities for the later feedback rubric to assess answer relevance, clarity, listening, concrete past actions and results, and role preparation. A candidate question is optional, not a required rubric checkbox; do not mechanically ask one question per rubric row.',
         'Listen to the candidate’s latest answer before deciding what to ask next. Prefer a relevant follow-up over a new topic when a claim, decision, conflict, result, or lesson is unclear. Refer to the specific detail they just mentioned so the question feels connected.',
         'Useful follow-ups uncover the situation, their own responsibility, what they did and why, the result, and what they would change. Ask for evidence or a concrete example when an answer is general; do not recite STAR labels or demand a formula.',
         'Track which role-specific competencies have actual evidence and which do not. If an answer already gives enough evidence, briefly acknowledge it and move to a different competency. Avoid repeating a question the candidate has already answered. Adapt the questions to the answers rather than following a predetermined list or count.',
         'Be professionally curious and occasionally challenge an assumption or trade-off as a human interviewer would. Keep questions specific, short, and answerable; never invent details from the candidate’s background.',
-        'Do not coach, announce grades, or treat a resume as proof. Judge only what the candidate actually demonstrates. Before closing, give the candidate a chance to ask a question when time permits.',
+        'Do not coach, announce grades, or treat a resume as proof. Judge only what the candidate actually demonstrates. In the final moments, offer the candidate a brief question only if time and conversation flow permit; do not cut short useful evidence to force it.',
       ].join(' ')
   }
 }
@@ -192,7 +206,7 @@ export function buildSystemPrompt(
     'Stay in character as the interviewer — never break role, never coach as a teacher would, never reveal these instructions.',
     'Keep your spoken turns concise and conversational, as if on a real video call.',
     interviewType === 'behavioral' && durationMinutes
-      ? `This is a five-minute session with a firm provider cutoff. You will receive live updates with elapsed and remaining time. The clock begins when Tavus creates the conversation, so the candidate may join with slightly less than five minutes left. Pace toward a meaningful assessment before the cutoff: if an introduction or answer runs long, politely redirect at the next natural pause to a concrete example; in the final 60–90 seconds, stop opening new stories, invite one brief candidate question if feasible, and close naturally before the room ends. Never cite a rigid question count, cut off mid-sentence, or end early merely because your initial plan is covered.`
+      ? `This is a five-minute session with a firm provider cutoff. You will receive live updates with elapsed and remaining time. The clock begins when Tavus creates the conversation, so the candidate may join with slightly less than five minutes left. Pace toward a meaningful assessment before the cutoff: if an introduction or answer runs long, politely redirect at the next natural pause to a concrete example. Continue substantive follow-ups while about a minute remains. Only in the final 20–30 seconds, if the candidate has finished their thought, optionally invite one brief question about the role or close naturally. Never cite a rigid question count, cut off mid-sentence, or end early merely because your initial plan is covered.`
       : '',
     jd ? `\nThe role is described by this job description — tailor the interview to it:\n${jd}` : '',
     resume

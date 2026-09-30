@@ -83,6 +83,9 @@ export default function InterviewLivePage() {
       try {
         const callbackToken = data.callbackToken || crypto.randomUUID()
         if (!data.callbackToken) await put(interview.recordId, { callbackToken })
+        // Load the call SDK before Tavus starts its provider-side clock, so
+        // downloading the video client does not consume interview time.
+        await import('@daily-co/daily-js')
         const conv = await startConversation({
           interviewId: interview.recordId,
           callbackToken,
