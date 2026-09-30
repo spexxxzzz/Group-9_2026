@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { test as signedInTest, expect as signedInExpect } from 'deepspace/testing'
 import { captureConsoleErrors } from './helpers/errors'
 
 /**
@@ -55,4 +56,14 @@ test.describe('Smoke tests', () => {
     await expect(page.getByText('Pick your role')).toBeVisible()
     await expect(page.getByText('Get your report')).toBeVisible()
   })
+})
+
+signedInTest('interview setup offers only the five-minute session', async ({ users }) => {
+  const [user] = await users(1)
+  await user.page.goto('/home')
+  await signedInExpect(user.page.getByText('Interview length')).toBeVisible()
+  await signedInExpect(user.page.getByText('5 minutes', { exact: true })).toBeVisible()
+  await signedInExpect(user.page.getByRole('button', { name: '7 min' })).toHaveCount(0)
+  await signedInExpect(user.page.getByRole('button', { name: '10 min' })).toHaveCount(0)
+  await signedInExpect(user.page.getByRole('button', { name: '12 min' })).toHaveCount(0)
 })

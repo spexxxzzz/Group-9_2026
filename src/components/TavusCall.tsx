@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import type { DailyCall } from '@daily-co/daily-js'
+import { remainingConversationSeconds } from '../lib/tavus'
 
 interface TavusCallProps {
   url: string
   conversationId: string
   durationMinutes: number
-  joinedAt?: number
+  startedAt?: number
   onJoined: (joinedAt: number) => void
   onTimeLeft: (seconds: number) => void
-  onTimeExpired: () => void
   onLeft: () => void
   onError: (message: string) => void
 }
@@ -17,15 +17,15 @@ interface TavusCallProps {
 export default function TavusCall(props: TavusCallProps) {
   const container = useRef<HTMLDivElement>(null)
   const call = useRef<DailyCall | null>(null)
+  const joined = useRef(false)
   const callbacks = useRef(props)
   callbacks.current = props
-  const [activeJoinedAt, setActiveJoinedAt] = useState(props.joinedAt)
-  const expired = useRef(false)
+  const [activeStartedAt, setActiveStartedAt] = useState(props.startedAt)
   const lastTimeBucket = useRef(-1)
 
   useEffect(() => {
-    if (props.joinedAt && !activeJoinedAt) setActiveJoinedAt(props.joinedAt)
-  }, [props.joinedAt, activeJoinedAt])
+    if (props.startedAt && props.startedAt !== activeStartedAt) setActiveStartedAt(props.startedAt)
+  }, [props.startedAt, activeStartedAt])
 
   useEffect(() => {
     if (!container.current) return
@@ -42,11 +42,13 @@ export default function TavusCall(props: TavusCallProps) {
       call.current = frame
       frame.on('joined-meeting', () => {
         if (disposed) return
-        const joinedAt = callbacks.current.joinedAt || Date.now()
-        setActiveJoinedAt(joinedAt)
-        callbacks.current.onJoined(joinedAt)
+        joined.current = true
+        setActiveStartedAt(callbacks.current.startedAt ?? Date.now())
+        lastTimeBucket.current = -1
+        callbacks.current.onJoined(Date.now())
       })
       frame.on('left-meeting', () => {
+        joined.current = false
         if (!disposed) callbacks.current.onLeft()
       })
       frame.on('app-message', (event) => {
@@ -64,43 +66,46 @@ export default function TavusCall(props: TavusCallProps) {
 
     return () => {
       disposed = true
+      joined.current = false
       call.current = null
       if (frame) void frame.destroy()
     }
   }, [props.url, props.conversationId])
 
   useEffect(() => {
-    if (!activeJoinedAt) return
+    if (!activeStartedAt) return
     const tick = () => {
-      const elapsed = Math.max(0, Math.floor((Date.now() - activeJoinedAt) / 1000))
-      const remaining = Math.max(0, callbacks.current.durationMinutes * 60 - elapsed)
+      const elapsed = Math.max(0, Math.floor((Date.now() - activeStartedAt) / 1000))
+      const remaining = remainingConversationSeconds(activeStartedAt, callbacks.current.durationMinutes)
       callbacks.current.onTimeLeft(remaining)
       const bucket = Math.floor(elapsed / 30)
-      if (remaining > 0 && call.current && bucket !== lastTimeBucket.current) {
+      if (remaining > 0 && joined.current && call.current && bucket !== lastTimeBucket.current) {
         lastTimeBucket.current = bucket
-        const closing = remaining <= 60
+        const guidance = remaining <= 90
+          ? 'The provider cutoff is close. Do not open a new long story. Briefly acknowledge the answer, invite one candidate question if feasible, and close naturally before time expires.'
+          : remaining <= 150
+            ? 'Check what the first story actually established about the role’s highest-priority competencies. Ask a concise evidence-seeking follow-up or test one uncovered competency; if an answer is long, redirect at the next natural pause.'
+            : 'Use the candidate’s latest answer to probe a high-priority competency from your private role-and-job-description plan. Prefer concrete actions, decisions, outcomes, and reflection over a new generic question.'
         const context = [
-          `Live interview time check: ${Math.floor(elapsed / 60)} minutes ${elapsed % 60} seconds elapsed; ${Math.ceil(remaining / 60)} minute${remaining > 60 ? 's' : ''} remaining in the ${callbacks.current.durationMinutes}-minute session.`,
-          closing
-            ? 'Acknowledge the candidate’s latest point, ask at most one brief final follow-up if valuable, invite a candidate question if possible, and close naturally before time runs out.'
-            : 'Pace the next question using the answer just given. If an introduction or answer is taking most of the remaining time, politely redirect at the next natural pause toward the most useful unanswered competency.',
+          `Live interview time check: ${remaining} seconds remain before Tavus ends this five-minute conversation. Time is measured from conversation creation, not candidate join.`,
+          guidance,
         ].join(' ')
-        call.current.sendAppMessage({
-          message_type: 'conversation',
-          event_type: 'conversation.append_llm_context',
-          conversation_id: callbacks.current.conversationId,
-          properties: { context },
-        }, '*')
-      }
-      if (remaining === 0 && !expired.current) {
-        expired.current = true
-        callbacks.current.onTimeExpired()
+        try {
+          call.current.sendAppMessage({
+            message_type: 'conversation',
+            event_type: 'conversation.append_llm_context',
+            conversation_id: callbacks.current.conversationId,
+            properties: { context },
+          }, '*')
+        } catch {
+          // The room may have ended between the timer check and this send.
+        }
       }
     }
     tick()
     const interval = window.setInterval(tick, 1_000)
     return () => window.clearInterval(interval)
-  }, [activeJoinedAt])
+  }, [activeStartedAt])
 
   return <div ref={container} className="absolute inset-0 h-full w-full" />
 }

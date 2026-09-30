@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AuthOverlay, useAuth, useMutations, useQuery, type RecordData } from 'deepspace'
 import AccountControl from '../components/AccountControl'
-import { BEHAVIORAL_DURATIONS, fetchInterviewers, type InterviewerOption } from '../lib/tavus'
+import { fetchInterviewers, type InterviewerOption } from '../lib/tavus'
 import { extractResumeText } from '../lib/resume'
 import {
   ArrowRight,
@@ -174,7 +174,6 @@ function NewInterviewForm() {
   const [role, setRole] = useState('')
   const [interviewType, setInterviewType] = useState<InterviewType>('behavioral')
   const [difficulty, setDifficulty] = useState<Difficulty>('mid')
-  const [durationMinutes, setDurationMinutes] = useState<number>(10)
   const [jobDescription, setJobDescription] = useState('')
   const [resumeText, setResumeText] = useState('')
   const [resumeFileName, setResumeFileName] = useState('')
@@ -231,7 +230,7 @@ function NewInterviewForm() {
         userId: '', // stamped server-side (userBound)
         role: role.trim(),
         interviewType,
-        durationMinutes: interviewType === 'behavioral' ? durationMinutes : undefined,
+        durationMinutes: 5,
         difficulty,
         replicaId: chosen?.id,
         replicaName: chosen?.name,
@@ -357,32 +356,17 @@ function NewInterviewForm() {
           />
         </div>
 
-        {interviewType === 'behavioral' && (
-          <div className="space-y-2.5">
-            <Label>Interview length</Label>
-            <div className="grid grid-cols-3 gap-2.5">
-              {BEHAVIORAL_DURATIONS.map((minutes) => (
-                <button
-                  key={minutes}
-                  type="button"
-                  aria-pressed={durationMinutes === minutes}
-                  onClick={() => setDurationMinutes(minutes)}
-                  className={cn(
-                    'rounded-xl border py-2.5 text-sm font-medium transition-all',
-                    durationMinutes === minutes
-                      ? 'border-primary/60 bg-primary/10 text-foreground'
-                      : 'border-border bg-card/40 text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {minutes} min
-                </button>
-              ))}
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              The interviewer adjusts its follow-ups and closing to the time available.
-            </p>
+        <div className="space-y-2.5">
+          <Label>Interview length</Label>
+          <div className="rounded-xl border border-primary/40 bg-primary/10 px-4 py-3 text-sm font-medium text-foreground">
+            5 minutes
           </div>
-        )}
+          <p className="text-[11px] text-muted-foreground">
+            {interviewType === 'behavioral'
+              ? 'The interviewer prioritizes role-specific examples and follow-ups before the five-minute call limit.'
+              : 'This is a brief practice session; the call ends after five minutes.'}
+          </p>
+        </div>
 
         <div className="space-y-2.5">
           <Label htmlFor="jd">

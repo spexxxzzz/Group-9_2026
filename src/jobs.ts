@@ -299,6 +299,7 @@ async function quickSummary(env: Env, ctx: JobContext, input: ScoreInput): Promi
       'Only grade candidate_questions if the interviewer invited questions or the candidate actually asked one. Otherwise use null; a short interview must not be penalized for an opportunity it never offered.',
       'For preparation, assess demonstrated understanding of the role. Do not penalize missing company-specific facts when no company information was supplied.',
       'Do not penalize a short timed session for answering fewer than a fixed number of questions. Judge the quality and relevance of the evidence that was available.',
+      'Before grading, identify the two or three most important behavioral competencies for this role and any supplied job description. Use that as an evaluation lens for relevance, stories, and preparation, but never invent company requirements or penalize a competency the interviewer did not give the candidate a fair chance to demonstrate.',
       'Rubric anchors:\n' + anchors,
       'JSON shape: {"questionsAnswered":number,"summary":string,"rubric":[{"id":string,"grade":1|2|3|4|null,"justification":string,"evidence":string}]}',
     ].join('\n')

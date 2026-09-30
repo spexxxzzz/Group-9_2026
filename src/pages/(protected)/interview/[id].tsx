@@ -89,7 +89,6 @@ export default function InterviewLivePage() {
           role: data.role,
           interviewType: data.interviewType,
           difficulty: data.difficulty,
-          durationMinutes: data.durationMinutes,
           jobDescription: data.jobDescription,
           // Defense in depth: a resume is never forwarded to an AI service
           // unless this interview row carries explicit candidate consent.
@@ -100,6 +99,7 @@ export default function InterviewLivePage() {
           personaId: conv.personaId,
           conversationId: conv.conversationId,
           conversationUrl: conv.conversationUrl,
+          conversationStartedAt: conv.conversationStartedAt,
           status: 'live',
           ...(conv.problem
             ? {
@@ -204,12 +204,11 @@ export default function InterviewLivePage() {
           url={data.conversationUrl}
           conversationId={data.conversationId!}
           durationMinutes={interviewDuration(data.interviewType, data.durationMinutes)}
-          joinedAt={data.joinedAt}
+          startedAt={data.conversationStartedAt ?? data.joinedAt}
           onJoined={(joinedAt) => {
             if (!data.joinedAt) void put(interview.recordId, { joinedAt })
           }}
           onTimeLeft={setRemainingSeconds}
-          onTimeExpired={() => void handleEnd()}
           onLeft={() => void handleEnd()}
           onError={(message) => setProvisionError(message)}
         />

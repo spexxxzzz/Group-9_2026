@@ -19,6 +19,7 @@ export const interviewsSchema: CollectionSchema = {
     { name: 'userId', storage: 'text', interpretation: 'plain', userBound: true, immutable: true, required: true },
     { name: 'role', storage: 'text', interpretation: 'plain', required: true },
     { name: 'durationMinutes', storage: 'number', interpretation: 'plain' },
+    { name: 'conversationStartedAt', storage: 'number', interpretation: 'plain' },
     { name: 'joinedAt', storage: 'number', interpretation: 'plain' },
     { name: 'callbackToken', storage: 'text', interpretation: 'plain' },
     { name: 'jobDescription', storage: 'text', interpretation: 'plain' },

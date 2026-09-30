@@ -16,9 +16,11 @@ export const EXPECTED_QUESTIONS = 6
 export interface Interview {
   userId: string
   role: string
-  /** Selected behavioral session length; older records retain the legacy cap. */
+  /** Five-minute session length; legacy longer selections are ignored. */
   durationMinutes?: number
-  /** Candidate join time in Unix milliseconds; used for the live countdown. */
+  /** Tavus conversation creation time in Unix milliseconds; starts its call cap. */
+  conversationStartedAt?: number
+  /** Candidate join time in Unix milliseconds, for session diagnostics. */
   joinedAt?: number
   /** Random per-session bearer token for Tavus end-of-call callbacks. */
   callbackToken?: string
