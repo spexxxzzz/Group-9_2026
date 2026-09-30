@@ -26,6 +26,7 @@ export const reportsSchema: CollectionSchema = {
     { name: 'detailed', storage: 'text', interpretation: { kind: 'json' } },
     // [{ question, answer, score, feedback, betterAnswer }]
     { name: 'perQuestion', storage: 'text', interpretation: { kind: 'json' } },
+    { name: 'behavioralRubric', storage: 'text', interpretation: { kind: 'json' } },
     { name: 'strengths', storage: 'text', interpretation: { kind: 'json' } },
     { name: 'weaknesses', storage: 'text', interpretation: { kind: 'json' } },
     { name: 'nonVerbalFeedback', storage: 'text', interpretation: 'plain' },

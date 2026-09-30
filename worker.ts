@@ -18,7 +18,7 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { generateText } from 'ai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
-import { verifyJwt, apiWorkerFetch, platformWorkerFetch, authWorkerFetch } from 'deepspace/worker'
+import { verifyJwt, apiWorkerFetch, platformWorkerFetch, authWorkerFetch, enqueueJob } from 'deepspace/worker'
 import type { JwtVerifierConfig, VerifyResult } from 'deepspace/worker'
 import { RecordRoom, YjsRoom, CanvasRoom, PresenceRoom, CronRoom, JobRoom } from 'deepspace/worker'
 import type { Job, JobContext, ActionTools, ActionResult, DOManifest, DOBindings } from 'deepspace/worker'
@@ -29,6 +29,7 @@ import { schemas } from './src/schemas.js'
 import { integrations } from './src/integrations.js'
 import { registerAiChatRoutes } from './src/ai/chat-routes.js'
 import { callTavus, type TavusOperation } from './src/lib/tavus-server.js'
+import type { Interview } from './src/types.js'
 
 // =============================================================================
 // DO Manifest — declares all Durable Objects for dynamic deploy bindings
@@ -498,10 +499,120 @@ app.post('/api/tavus/:operation', async (c) => {
 
   try {
     const params = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+    if (operation === 'create-conversation') {
+      const interviewId = typeof params.interview_id === 'string' ? params.interview_id : ''
+      const callbackToken = typeof params.callback_token === 'string' ? params.callback_token : ''
+      if (interviewId && callbackToken) {
+        const interview = await getInterviewRecord(c.env, interviewId)
+        if (interview.createdBy !== auth.userId || interview.data.callbackToken !== callbackToken) {
+          return c.json({ success: false, error: 'Interview access denied' }, 403)
+        }
+        params.callback_url = `${new URL(c.req.url).origin}/api/tavus/callback/${encodeURIComponent(interviewId)}/${encodeURIComponent(callbackToken)}`
+      }
+      delete params.interview_id
+      delete params.callback_token
+    }
     const data = await callTavus(c.env, operation as TavusOperation, params)
     return c.json({ success: true, data })
   } catch (error) {
     return c.json({ success: false, error: error instanceof Error ? error.message : 'Tavus request failed' }, 502)
+  }
+})
+
+type InterviewEnvelope = { recordId: string; createdBy: string; data: Interview }
+
+async function interviewRecordTool<T>(env: Env, userId: string, tool: string, params: Record<string, unknown>): Promise<T> {
+  const stub = env.RECORD_ROOMS.get(env.RECORD_ROOMS.idFromName(`app:${env.APP_NAME}`))
+  const response = await stub.fetch(new Request('https://internal/api/tools/execute', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-User-Id': userId,
+      'X-App-Action': 'true',
+    },
+    body: JSON.stringify({ tool, params }),
+  }))
+  const result = await response.json() as { success: boolean; data?: T; error?: string }
+  if (!result.success || !result.data) throw new Error(result.error || `Record operation ${tool} failed`)
+  return result.data
+}
+
+async function getInterviewRecord(env: Env, interviewId: string): Promise<InterviewEnvelope> {
+  const result = await interviewRecordTool<{ record: InterviewEnvelope }>(
+    env, env.OWNER_USER_ID, 'records.get', { collection: 'interviews', recordId: interviewId },
+  )
+  return result.record
+}
+
+/** Shared by the user finish action and Tavus shutdown callback. */
+async function ensureInterviewScoring(env: Env, interviewId: string): Promise<string> {
+  const current = await getInterviewRecord(env, interviewId)
+  if (current.data.scoringJobId) return current.data.scoringJobId
+  if (!current.data.conversationId) throw new Error('Conversation is not ready')
+  const jobId = await enqueueJob(
+    env.JOB_ROOMS,
+    `app:${env.APP_NAME}`,
+    'score-interview',
+    { interviewId, conversationId: current.data.conversationId },
+    { maxAttempts: 3, enqueuedBy: current.createdBy },
+  )
+  await interviewRecordTool(env, current.createdBy, 'records.update', {
+    collection: 'interviews',
+    recordId: interviewId,
+    data: { status: 'ended', scoringJobId: jobId },
+  })
+  return jobId
+}
+
+app.post('/api/interviews/:id/finish', async (c) => {
+  const auth = await resolveAuth(c.req.raw, c.env)
+  if (!auth) return c.json({ success: false, error: 'Sign in required' }, 401)
+  try {
+    const interviewId = c.req.param('id')
+    const interview = await getInterviewRecord(c.env, interviewId)
+    if (interview.createdBy !== auth.userId) return c.json({ success: false, error: 'Interview access denied' }, 403)
+    if (!interview.data.conversationId) return c.json({ success: false, error: 'Conversation is not ready' }, 409)
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+    if (interview.data.interviewType === 'coding') {
+      await interviewRecordTool(c.env, auth.userId, 'records.update', {
+        collection: 'interviews', recordId: interviewId,
+        data: {
+          code: typeof body.code === 'string' ? body.code.slice(0, 30_000) : '',
+          language: typeof body.language === 'string' ? body.language.slice(0, 40) : '',
+          hintsUsed: typeof body.hintsUsed === 'number' ? Math.max(0, Math.floor(body.hintsUsed)) : 0,
+        },
+      })
+    }
+    const jobId = await ensureInterviewScoring(c.env, interviewId)
+    try {
+      await callTavus(c.env, 'end-conversation', { conversation_id: interview.data.conversationId })
+    } catch {
+      // Tavus may already have closed the room at its duration limit.
+    }
+    return c.json({ success: true, data: { jobId } })
+  } catch (error) {
+    return c.json({ success: false, error: error instanceof Error ? error.message : 'Could not finish interview' }, 502)
+  }
+})
+
+app.post('/api/tavus/callback/:id/:token', async (c) => {
+  try {
+    const interviewId = c.req.param('id')
+    const interview = await getInterviewRecord(c.env, interviewId)
+    if (!interview.data.callbackToken || interview.data.callbackToken !== c.req.param('token')) {
+      return c.json({ error: 'Invalid callback token' }, 403)
+    }
+    const event = (await c.req.json()) as { event_type?: string; conversation_id?: string }
+    if (event.event_type !== 'system.shutdown' && event.event_type !== 'application.transcription_ready') {
+      return c.json({ success: true })
+    }
+    if (event.conversation_id !== interview.data.conversationId) {
+      return c.json({ error: 'Conversation mismatch' }, 403)
+    }
+    await ensureInterviewScoring(c.env, interviewId)
+    return c.json({ success: true })
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Callback failed' }, 502)
   }
 })
 

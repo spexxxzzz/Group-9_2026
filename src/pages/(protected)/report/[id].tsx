@@ -30,6 +30,7 @@ import {
 } from '../../../components/ui'
 import { cn } from '../../../components/ui/utils'
 import { SCOPE_ID } from '../../../constants'
+import { BEHAVIORAL_CRITERIA, behavioralAverage, RUBRIC_GRADE_LABELS } from '../../../lib/behavioral-rubric'
 import type { Interview, InterviewType, PerQuestionScore, Report, TranscriptTurn } from '../../../types'
 
 const TYPE_LABEL: Record<InterviewType, string> = {
@@ -173,6 +174,8 @@ function ReportView({ interview, report }: { interview: Interview; report: Repor
         }}
       />
 
+      {report.behavioralRubric?.length ? <BehavioralRubricTable report={report} /> : null}
+
       {(!!report.strengths?.length || !!report.weaknesses?.length) && (
         <div className="grid gap-4 sm:grid-cols-2">
           <PointsCard title="Strengths" points={report.strengths} tone="success" />
@@ -201,7 +204,7 @@ function ReportView({ interview, report }: { interview: Interview; report: Repor
         </TabsList>
         <TabsContent value="breakdown" className="mt-5 space-y-4">
           {report.perQuestion?.length ? (
-            report.perQuestion.map((q, i) => <QuestionCard key={i} index={i} q={q} />)
+            report.perQuestion.map((q, i) => <QuestionCard key={i} index={i} q={q} showScore={!report.behavioralRubric?.length} />)
           ) : report.detailed ? (
             <p className="text-sm text-muted-foreground">No per-question breakdown available.</p>
           ) : (
@@ -213,6 +216,65 @@ function ReportView({ interview, report }: { interview: Interview; report: Repor
         </TabsContent>
       </Tabs>
     </div>
+  )
+}
+
+function BehavioralRubricTable({ report }: { report: Report }) {
+  const rows = report.behavioralRubric ?? []
+  const average = behavioralAverage(rows)
+  return (
+    <section className="overflow-hidden rounded-3xl border border-border bg-card">
+      <div className="px-5 py-5 sm:px-6">
+        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-primary">Behavioral assessment</p>
+        <h2 className="mt-1 font-serif text-xl font-semibold text-foreground">Interview rubric</h2>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          Selected level: {average.toFixed(1)} / 4. Applicable rows are weighted equally; 1 maps to 0 and 4 maps to 100. Unavailable observations do not lower your score.
+        </p>
+      </div>
+      <div className="overflow-x-auto border-t border-border">
+        <table className="w-full min-w-[900px] border-collapse text-left text-xs">
+          <thead className="bg-muted/40 text-muted-foreground">
+            <tr>
+              <th className="w-40 px-4 py-3 font-semibold">Criterion</th>
+              {RUBRIC_GRADE_LABELS.map((label, index) => (
+                <th key={label} className="w-[17%] px-3 py-3 font-semibold">{index + 1} · {label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {BEHAVIORAL_CRITERIA.map((criterion) => {
+              const row = rows.find((item) => item.id === criterion.id)
+              if (!row) return null
+              return (
+                <tr key={criterion.id} className="border-t border-border align-top">
+                  <th className="px-4 py-4 font-semibold leading-relaxed text-foreground">
+                    {criterion.label}
+                    {row.grade === null && <span className="mt-1 block text-[11px] font-normal text-muted-foreground">Not assessed</span>}
+                    <span className="mt-2 block text-[11px] font-normal leading-relaxed text-muted-foreground">{row.justification}</span>
+                    {row.evidence && <span className="mt-2 block text-[11px] font-normal italic leading-relaxed text-foreground">Evidence: {row.evidence}</span>}
+                  </th>
+                  {criterion.anchors.map((anchor, index) => (
+                    <td
+                      key={index}
+                      className={cn(
+                        'px-3 py-4 leading-relaxed text-muted-foreground',
+                        row.grade === index + 1 && 'bg-primary/10 font-medium text-foreground ring-1 ring-inset ring-primary/40',
+                      )}
+                    >
+                      {row.grade === index + 1 && <span className="mb-1 block font-semibold text-primary">✓ Selected</span>}
+                      {anchor}
+                    </td>
+                  ))}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="px-5 py-3 text-[11px] leading-relaxed text-muted-foreground sm:px-6">
+        Adapted from Princeton University Center for Career Development’s interview rubric. Visible engagement is graded only when reliable camera observations are available.
+      </p>
+    </section>
   )
 }
 
@@ -371,7 +433,7 @@ function PointsCard({
   )
 }
 
-function QuestionCard({ index, q }: { index: number; q: PerQuestionScore }) {
+function QuestionCard({ index, q, showScore }: { index: number; q: PerQuestionScore; showScore: boolean }) {
   const t = tone(q.score, 10)
   return (
     <div className="rounded-3xl border border-border bg-card p-5">
@@ -379,14 +441,14 @@ function QuestionCard({ index, q }: { index: number; q: PerQuestionScore }) {
         <h3 className="text-[15px] font-semibold leading-snug text-foreground">
           <span className="font-serif text-muted-foreground">Q{index + 1}.</span> {q.question}
         </h3>
-        <span
+        {showScore && <span
           className={cn(
             'shrink-0 rounded-full px-2.5 py-0.5 font-serif text-sm font-semibold tabular-nums',
             t === 'success' ? 'bg-success/15 text-success' : t === 'warning' ? 'bg-warning/15 text-warning' : 'bg-destructive/15 text-destructive',
           )}
         >
           {q.score}/10
-        </span>
+        </span>}
       </div>
 
       {q.answer && (

@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf'
 import type { Interview, InterviewType, PerQuestionScore, Report } from '../types'
+import { BEHAVIORAL_CRITERIA, behavioralAverage, RUBRIC_GRADE_LABELS } from './behavioral-rubric'
 
 const PAGE_WIDTH = 595.28
 const PAGE_HEIGHT = 841.89
@@ -134,8 +135,43 @@ export function downloadReportPdf({ interview, report }: ReportPdfInput): void {
     paragraph(`Questions answered: ${report.questionsAnswered} of ${report.expectedQuestions}`, { size: 10, color: [83, 94, 108] })
   }
 
-  heading('Scoring rubric')
-  rubric(interview.interviewType).forEach(bullet)
+  if (report.behavioralRubric?.length) {
+    heading('Behavioral grading rubric')
+    paragraph(
+      `Average: ${behavioralAverage(report.behavioralRubric).toFixed(1)} / 4. Applicable rows are weighted equally; 1 maps to 0 and 4 maps to 100. Not assessed rows are excluded.`,
+      { size: 9, gap: 9 },
+    )
+    const criterionWidth = 145
+    for (const criterion of BEHAVIORAL_CRITERIA) {
+      const row = report.behavioralRubric.find((item) => item.id === criterion.id)
+      if (!row) continue
+      const selected = row.grade === null
+        ? 'Not assessed'
+        : `${row.grade} - ${RUBRIC_GRADE_LABELS[row.grade - 1]}`
+      const detail = row.grade === null
+        ? row.justification
+        : `${criterion.anchors[row.grade - 1]} ${row.justification}${row.evidence ? ` Evidence: ${row.evidence}` : ''}`
+      const titleLines = doc.splitTextToSize(clean(criterion.label), criterionWidth - 16) as string[]
+      const detailLines = doc.splitTextToSize(clean(`${selected}. ${detail}`), CONTENT_WIDTH - criterionWidth - 20) as string[]
+      const rowHeight = Math.max(titleLines.length, detailLines.length) * 13 + 18
+      requireSpace(rowHeight + 3)
+      doc.setDrawColor(222, 226, 232)
+      doc.rect(MARGIN, y - 10, CONTENT_WIDTH, rowHeight)
+      doc.line(MARGIN + criterionWidth, y - 10, MARGIN + criterionWidth, y - 10 + rowHeight)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(9)
+      doc.setTextColor(18, 24, 34)
+      doc.text(titleLines, MARGIN + 8, y + 3)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(52, 58, 68)
+      doc.text(detailLines, MARGIN + criterionWidth + 8, y + 3)
+      y += rowHeight + 3
+    }
+    paragraph('Adapted from Princeton University Center for Career Development interview rubric: careerdevelopment.princeton.edu/book/export/html/9191', { size: 8, color: [91, 103, 119], gap: 10 })
+  } else {
+    heading('Scoring rubric')
+    rubric(interview.interviewType).forEach(bullet)
+  }
 
   if (report.strengths?.length) {
     heading('Strengths')
@@ -156,7 +192,7 @@ export function downloadReportPdf({ interview, report }: ReportPdfInput): void {
 
   heading('Question-by-question grading')
   if (report.perQuestion?.length) {
-    report.perQuestion.forEach((question, index) => addQuestion(doc, question, index + 1, () => y, (next) => { y = next }, requireSpace, paragraph))
+    report.perQuestion.forEach((question, index) => addQuestion(doc, question, index + 1, () => y, (next) => { y = next }, requireSpace, paragraph, !report.behavioralRubric?.length))
   } else {
     paragraph(report.detailed ? 'No question-by-question breakdown was available.' : 'Detailed feedback was still being generated when this PDF was downloaded.')
   }
@@ -184,6 +220,7 @@ function addQuestion(
   setY: (value: number) => void,
   requireSpace: (height: number) => void,
   paragraph: (text: string, options?: { size?: number; color?: [number, number, number]; indent?: number; gap?: number }) => void,
+  showScore: boolean,
 ) {
   requireSpace(30)
   doc.setFont('helvetica', 'bold')
@@ -195,12 +232,14 @@ function addQuestion(
     doc.text(line, MARGIN, getY())
     setY(getY() + 16)
   })
-  doc.setFillColor(question.score >= 8 ? 228 : question.score >= 5 ? 255 : 254, question.score >= 8 ? 246 : question.score >= 5 ? 244 : 234, question.score >= 8 ? 235 : question.score >= 5 ? 214 : 234)
-  doc.roundedRect(PAGE_WIDTH - MARGIN - 48, getY() - 31, 48, 20, 8, 8, 'F')
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(10)
-  doc.setTextColor(35, 50, 68)
-  doc.text(`${question.score}/10`, PAGE_WIDTH - MARGIN - 24, getY() - 17, { align: 'center' })
+  if (showScore) {
+    doc.setFillColor(question.score >= 8 ? 228 : question.score >= 5 ? 255 : 254, question.score >= 8 ? 246 : question.score >= 5 ? 244 : 234, question.score >= 8 ? 235 : question.score >= 5 ? 214 : 234)
+    doc.roundedRect(PAGE_WIDTH - MARGIN - 48, getY() - 31, 48, 20, 8, 8, 'F')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(10)
+    doc.setTextColor(35, 50, 68)
+    doc.text(`${question.score}/10`, PAGE_WIDTH - MARGIN - 24, getY() - 17, { align: 'center' })
+  }
   setY(getY() + 3)
   if (question.answer) {
     paragraph('Candidate answer', { size: 9, color: [91, 103, 119], gap: 1 })

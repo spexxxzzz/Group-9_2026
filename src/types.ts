@@ -8,12 +8,20 @@ export type InterviewType = 'behavioral' | 'coding' | 'system-design'
 
 export type Difficulty = 'intern' | 'junior' | 'mid' | 'senior' | 'staff'
 
+import type { BehavioralRubricRow } from './lib/behavioral-rubric'
+
 /** Number of questions a session aims for — used to normalize the score. */
 export const EXPECTED_QUESTIONS = 6
 
 export interface Interview {
   userId: string
   role: string
+  /** Selected behavioral session length; older records retain the legacy cap. */
+  durationMinutes?: number
+  /** Candidate join time in Unix milliseconds; used for the live countdown. */
+  joinedAt?: number
+  /** Random per-session bearer token for Tavus end-of-call callbacks. */
+  callbackToken?: string
   jobDescription?: string
   /** Extracted locally from an opted-in resume; the source file is never stored. */
   resumeText?: string
@@ -69,6 +77,8 @@ export interface Report {
   /** The session's target question count (EXPECTED_QUESTIONS). */
   expectedQuestions?: number
   perQuestion?: PerQuestionScore[]
+  /** Behavioral interviews use these grades as the source of the overall score. */
+  behavioralRubric?: BehavioralRubricRow[]
   strengths?: string[]
   weaknesses?: string[]
   /** Optional Raven camera / delivery observations, phrased as coaching. */

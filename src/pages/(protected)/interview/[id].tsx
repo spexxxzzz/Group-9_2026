@@ -1,6 +1,6 @@
 /**
- * Live interview — the stage. We embed the Tavus avatar call (Daily WebRTC)
- * in an iframe; no LiveKit/Daily SDK needed.
+ * Live interview — the stage. Daily controls the Tavus call so the interviewer
+ * receives live time context and an ended call reliably reaches scoring.
  *
  * On first open of a freshly-created interview we provision the Tavus persona +
  * conversation (billable, signed-in only) and flip the row to 'live'.
@@ -16,7 +16,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useJobs, useMutations, useQuery } from 'deepspace'
+import { useMutations, useQuery } from 'deepspace'
 import { AlertTriangle, Code2, Lightbulb, Loader2, PhoneOff } from 'lucide-react'
 import {
   Button,
@@ -30,12 +30,12 @@ import {
   useToast,
 } from '../../../components/ui'
 import { cn } from '../../../components/ui/utils'
-import { SCOPE_ID } from '../../../constants'
+import TavusCall from '../../../components/TavusCall'
 import {
   startConversation,
-  endConversation,
+  finishInterview,
   getConversationState,
-  CALL_LIMIT_MINUTES,
+  interviewDuration,
 } from '../../../lib/tavus'
 import type { Interview, InterviewType } from '../../../types'
 
@@ -52,7 +52,6 @@ export default function InterviewLivePage() {
   const navigate = useNavigate()
   const { records, status } = useQuery<Interview>('interviews')
   const { put } = useMutations<Interview>('interviews')
-  const { enqueue } = useJobs(SCOPE_ID)
   const { error: toastError } = useToast()
 
   const interview = records.find((r) => r.recordId === id)
@@ -62,8 +61,10 @@ export default function InterviewLivePage() {
   const [confirmEnd, setConfirmEnd] = useState(false)
   const [ending, setEnding] = useState(false)
   const [convEnded, setConvEnded] = useState(false)
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null)
   const provisionStarted = useRef(false)
   const stateChecked = useRef(false)
+  const finishStarted = useRef(false)
 
   const isCoding = data?.interviewType === 'coding'
   const [padOpen, setPadOpen] = useState(false)
@@ -80,10 +81,15 @@ export default function InterviewLivePage() {
 
     ;(async () => {
       try {
+        const callbackToken = data.callbackToken || crypto.randomUUID()
+        if (!data.callbackToken) await put(interview.recordId, { callbackToken })
         const conv = await startConversation({
+          interviewId: interview.recordId,
+          callbackToken,
           role: data.role,
           interviewType: data.interviewType,
           difficulty: data.difficulty,
+          durationMinutes: data.durationMinutes,
           jobDescription: data.jobDescription,
           // Defense in depth: a resume is never forwarded to an AI service
           // unless this interview row carries explicit candidate consent.
@@ -119,7 +125,10 @@ export default function InterviewLivePage() {
     stateChecked.current = true
     ;(async () => {
       const state = await getConversationState(data.conversationId!)
-      if (state === 'ended') setConvEnded(true)
+      if (state === 'ended') {
+        setConvEnded(true)
+        void handleEnd()
+      }
     })()
   }, [data])
 
@@ -131,21 +140,17 @@ export default function InterviewLivePage() {
   }, [data, id, navigate])
 
   async function handleEnd() {
-    if (!interview || !data?.conversationId) return
+    if (!interview || !data?.conversationId || finishStarted.current) return
+    finishStarted.current = true
     setEnding(true)
     try {
-      await endConversation(data.conversationId)
-      if (isCoding) {
-        await put(interview.recordId, { code, language, hintsUsed })
-      }
-      const jobId = await enqueue(
-        'score-interview',
-        { interviewId: interview.recordId, conversationId: data.conversationId },
-        { maxAttempts: 3 },
+      await finishInterview(
+        interview.recordId,
+        isCoding ? { code, language, hintsUsed } : undefined,
       )
-      await put(interview.recordId, { status: 'ended', scoringJobId: jobId })
       navigate(`/report/${interview.recordId}`, { replace: true })
     } catch (err) {
+      finishStarted.current = false
       setEnding(false)
       setConfirmEnd(false)
       toastError('Could not end the interview', err instanceof Error ? err.message : String(err))
@@ -195,11 +200,18 @@ export default function InterviewLivePage() {
           ending={ending}
         />
       ) : data.conversationUrl ? (
-        <iframe
-          title="AI interviewer"
-          src={data.conversationUrl}
-          allow="camera; microphone; autoplay; display-capture; fullscreen"
-          className="absolute inset-0 h-full w-full"
+        <TavusCall
+          url={data.conversationUrl}
+          conversationId={data.conversationId!}
+          durationMinutes={interviewDuration(data.interviewType, data.durationMinutes)}
+          joinedAt={data.joinedAt}
+          onJoined={(joinedAt) => {
+            if (!data.joinedAt) void put(interview.recordId, { joinedAt })
+          }}
+          onTimeLeft={setRemainingSeconds}
+          onTimeExpired={() => void handleEnd()}
+          onLeft={() => void handleEnd()}
+          onError={(message) => setProvisionError(message)}
         />
       ) : (
         <Connecting />
@@ -223,7 +235,9 @@ export default function InterviewLivePage() {
             </span>
             {data.status === 'live' && !convEnded && (
               <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                · up to {CALL_LIMIT_MINUTES[data.interviewType]} min
+                · {remainingSeconds === null
+                  ? `up to ${interviewDuration(data.interviewType, data.durationMinutes)} min`
+                  : `${Math.floor(remainingSeconds / 60)}:${String(remainingSeconds % 60).padStart(2, '0')} left`}
               </span>
             )}
           </div>

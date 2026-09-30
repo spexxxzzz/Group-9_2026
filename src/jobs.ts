@@ -18,6 +18,12 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import type { Job, JobContext } from 'deepspace/worker'
 import type { Env } from '../worker'
 import { callTavus } from './lib/tavus-server'
+import {
+  BEHAVIORAL_CRITERIA,
+  behavioralScore,
+  parseBehavioralRubric,
+  type BehavioralRubricRow,
+} from './lib/behavioral-rubric'
 import { EXPECTED_QUESTIONS } from './types'
 import type { InterviewType, PerQuestionScore, Report, TranscriptTurn } from './types'
 
@@ -152,6 +158,7 @@ interface QuickResult {
   overallScore: number
   questionsAnswered: number
   summary: string
+  behavioralRubric?: BehavioralRubricRow[]
 }
 
 interface DetailResult {
@@ -175,6 +182,7 @@ interface ScoreInput {
   hintsUsed?: number
   totalHints?: number
   perceptionAnalysis?: string
+  behavioralRubric?: BehavioralRubricRow[]
   /** Candidate-supplied resume context, only when consent was recorded. */
   resumeText?: string
 }
@@ -253,6 +261,9 @@ function userPromptFor(input: ScoreInput): string {
     input.resumeText?.trim()
       ? `Candidate-provided resume context (the candidate explicitly opted in; use only for relevant, evidence-based coaching):\n${input.resumeText.trim()}\n`
       : '',
+    input.behavioralRubric?.length
+      ? `The final behavioral grades have already been selected. Keep detailed feedback consistent with these rows; do not calculate a new overall score:\n${JSON.stringify(input.behavioralRubric)}\n`
+      : '',
     problemBlock,
     'Interview transcript:',
     transcriptToText(input.turns),
@@ -274,6 +285,41 @@ function userPromptFor(input: ScoreInput): string {
 async function quickSummary(env: Env, ctx: JobContext, input: ScoreInput): Promise<QuickResult> {
   ctx.progress(0.45, 'Writing your summary…')
   const google = createGoogleGenerativeAI({ apiKey: env.GOOGLE_GENERATIVE_AI_API_KEY })
+  if (input.interviewType === 'behavioral') {
+    const anchors = BEHAVIORAL_CRITERIA.map((criterion) =>
+      `${criterion.id} (${criterion.label}): ${criterion.anchors.map((description, index) => `${index + 1}=${description}`).join(' | ')}`,
+    ).join('\n')
+    const system = [
+      'You are grading a behavioral mock interview using this fixed four-level rubric. Treat the transcript as evidence, not the resume as proof.',
+      'Return exactly one JSON object with questionsAnswered, summary, and seven rubric rows. Do not supply an overallScore; the application calculates it.',
+      'For each row choose grade 1, 2, 3, 4, or null if the candidate had no fair opportunity to demonstrate it.',
+      'Each graded row needs a short justification and a brief, specific piece of transcript or Raven evidence. A null row needs a justification and empty evidence.',
+      'A text transcript can establish wording and concision, but not pitch, volume, eye contact, or vocal pace. Do not claim to have observed those signals unless the supplied Raven analysis explicitly supports them.',
+      'Only grade visible engagement when Raven supplied an observable camera analysis. Camera off or no reliable observation means null. Do not infer emotion, personality, disability, protected traits, or hiring fitness from appearance.',
+      'Only grade candidate_questions if the interviewer invited questions or the candidate actually asked one. Otherwise use null; a short interview must not be penalized for an opportunity it never offered.',
+      'For preparation, assess demonstrated understanding of the role. Do not penalize missing company-specific facts when no company information was supplied.',
+      'Do not penalize a short timed session for answering fewer than a fixed number of questions. Judge the quality and relevance of the evidence that was available.',
+      'Rubric anchors:\n' + anchors,
+      'JSON shape: {"questionsAnswered":number,"summary":string,"rubric":[{"id":string,"grade":1|2|3|4|null,"justification":string,"evidence":string}]}',
+    ].join('\n')
+    const { text } = await generateText({
+      model: google(REPORT_MODEL),
+      system,
+      prompt: userPromptFor(input),
+      maxOutputTokens: 3_200,
+      abortSignal: ctx.signal,
+    })
+    const parsed = parseJsonObject(text)
+    const behavioralRubric = parseBehavioralRubric(parsed.rubric, !!input.perceptionAnalysis)
+    return {
+      overallScore: behavioralScore(behavioralRubric),
+      questionsAnswered: Number.isFinite(Number(parsed.questionsAnswered))
+        ? Math.max(0, Math.round(Number(parsed.questionsAnswered)))
+        : 0,
+      summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+      behavioralRubric,
+    }
+  }
   const system = [
     `You are an expert ${input.role} hiring manager. Give a fast first-impression grade of this mock interview.`,
     rubricFor(input.interviewType),
@@ -317,7 +363,9 @@ async function detailedFeedback(env: Env, ctx: JobContext, input: ScoreInput): P
     `You are an expert ${input.role} hiring manager grading a candidate's mock interview transcript.`,
     'Be specific, fair, and constructive. Base every judgement only on what the candidate actually said or wrote.',
     rubricFor(input.interviewType),
-    completenessRule,
+    input.interviewType === 'behavioral'
+      ? 'This is a short, timed behavioral interview. Do not expect a fixed number of questions; the overall grade is already determined by the evidence-based rubric.'
+      : completenessRule,
     hintNote(input),
     'Respond with a SINGLE JSON object and nothing else, matching exactly this shape:',
     '{',
@@ -461,6 +509,7 @@ export async function runJob(job: Job, ctx: JobContext, env: Env): Promise<unkno
 
     let reportId = existing?.recordId
     input.turns = (existing?.data.transcript as TranscriptTurn[] | undefined) ?? []
+    input.behavioralRubric = existing?.data.behavioralRubric
 
     // ── Phase 1: fast summary (skip if a partial report already exists) ──────
     if (!reportId) {
@@ -493,7 +542,8 @@ export async function runJob(job: Job, ctx: JobContext, env: Env): Promise<unkno
         transcript: input.turns,
         overallScore: quick.overallScore,
         questionsAnswered: quick.questionsAnswered,
-        expectedQuestions: EXPECTED_QUESTIONS,
+        expectedQuestions: input.interviewType === 'behavioral' ? undefined : EXPECTED_QUESTIONS,
+        behavioralRubric: quick.behavioralRubric,
         summary: quick.summary,
         detailed: false,
       }

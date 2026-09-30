@@ -18,6 +18,9 @@ export const interviewsSchema: CollectionSchema = {
   columns: [
     { name: 'userId', storage: 'text', interpretation: 'plain', userBound: true, immutable: true, required: true },
     { name: 'role', storage: 'text', interpretation: 'plain', required: true },
+    { name: 'durationMinutes', storage: 'number', interpretation: 'plain' },
+    { name: 'joinedAt', storage: 'number', interpretation: 'plain' },
+    { name: 'callbackToken', storage: 'text', interpretation: 'plain' },
     { name: 'jobDescription', storage: 'text', interpretation: 'plain' },
     // The original file stays in the browser. We retain only its extracted text,
     // and only after the candidate has explicitly opted into tailored questions.
