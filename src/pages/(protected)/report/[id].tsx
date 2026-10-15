@@ -14,6 +14,7 @@ import {
   ArrowLeft,
   Check,
   Download,
+  ExternalLink,
   Loader2,
   Minus,
   MessageSquare,
@@ -29,7 +30,7 @@ import {
   TabsTrigger,
 } from '../../../components/ui'
 import { cn } from '../../../components/ui/utils'
-import { SCOPE_ID } from '../../../constants'
+import { FEEDBACK_FORM_URL, SCOPE_ID } from '../../../constants'
 import { BEHAVIORAL_CRITERIA, behavioralAverage, RUBRIC_GRADE_LABELS } from '../../../lib/behavioral-rubric'
 import type { Interview, InterviewType, PerQuestionScore, Report, TranscriptTurn } from '../../../types'
 
@@ -379,6 +380,18 @@ function ScoreHeader({
               Detailed feedback is still generating…
             </p>
           )}
+          <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+            Help us build a better interview experience.{' '}
+            <a
+              href={FEEDBACK_FORM_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-medium text-primary underline underline-offset-4 transition-colors hover:text-primary/80 focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              Share your feedback
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+            </a>
+          </p>
         </div>
       </div>
     </div>

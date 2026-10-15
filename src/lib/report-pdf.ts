@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf'
 import type { Interview, InterviewType, PerQuestionScore, Report } from '../types'
+import { FEEDBACK_FORM_URL } from '../constants'
 import { BEHAVIORAL_CRITERIA, behavioralAverage, RUBRIC_GRADE_LABELS } from './behavioral-rubric'
 
 const PAGE_WIDTH = 595.28
@@ -134,6 +135,12 @@ export function downloadReportPdf({ interview, report }: ReportPdfInput): void {
   if (typeof report.questionsAnswered === 'number' && typeof report.expectedQuestions === 'number') {
     paragraph(`Questions answered: ${report.questionsAnswered} of ${report.expectedQuestions}`, { size: 10, color: [83, 94, 108] })
   }
+  requireSpace(24)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  doc.setTextColor(43, 101, 177)
+  doc.textWithLink('Share feedback to help us build a better product', MARGIN, y, { url: FEEDBACK_FORM_URL })
+  y += 24
 
   if (report.behavioralRubric?.length) {
     heading('Behavioral grading rubric')
