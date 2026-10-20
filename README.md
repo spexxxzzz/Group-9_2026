@@ -91,30 +91,50 @@ The scoring job runs after the call ends. It waits for the Tavus transcript, the
 
 Raven observations are intentionally framed as limited, actionable coaching. They are not used to infer personality, health, protected traits, or hiring suitability. Dialogue is a practice tool and should not be used as an automated employment decision system.
 
-## Run locally
+## Self-deploy a separate copy
+
+This repository includes the application and its deployment scripts. You need Node.js **22.15+**, npm, a [DeepSpace account](https://deep.space/), a Tavus API key with conversational-video access, and a Google Gemini API key that can use the model configured in [`src/jobs.ts`](./src/jobs.ts) and [`worker.ts`](./worker.ts). Provider plans, quotas, and charges are yours to manage. The app runs on DeepSpace/Cloudflare, not on your laptop after deployment.
+
+1. Fork this repository to **your own GitHub account** if you want your GitHub fork to be the new app's source of record, then clone your fork. DeepSpace permanently records the selected GitHub remote on the first deploy. If you clone this repository directly, change the Git remote to one you control before that first deploy.
+2. From the fresh clone, run:
+
+   ```sh
+   npm run setup:deploy -- my-unique-interview-app
+   ```
+
+   Pick a new lowercase name (2–63 characters, letters, digits, single hyphens). The script checks Node, installs the locked dependencies, opens DeepSpace login if needed, changes the app name in `wrangler.toml` and `src/constants.ts`, creates a **new app ID**, prompts privately for the two API keys, stores them in DeepSpace's production secrets store, and deploys to `https://my-unique-interview-app.app.space`. It will not reuse the original app's identity or data. Keep the terminal open for browser-based login.
+3. Open the printed URL, sign up or log in, start a short test interview, and confirm that the report completes. Tavus and Gemini calls can incur provider usage. Commit the generated `wrangler.toml` and `src/constants.ts` changes to **your fork** so future checkouts target your own app.
+
+The required server-side secret names are `TAVUS_API_KEY` and `GOOGLE_GENERATIVE_AI_API_KEY`. The setup script uses `deepspace secrets set ... --stdin`; it does not write their values to tracked files or command arguments. Never commit `.dev.vars`, tokens, or secrets. The app name and app ID are not credentials, but they identify the deployment target.
+
+To deploy later code changes from the same checkout, run:
 
 ```sh
-npm install
-npx deepspace login
-npx deepspace dev
+npm run deploy:app
 ```
 
-The server requires these secrets, stored outside source control:
+That script prints the target app before deploying. In the original maintainer checkout, it requires `npm run deploy:app -- --confirm-production` to avoid an accidental production deploy. Do **not** rerun the first-time setup command with a different name on an existing app; it refuses to repoint a checkout. For a second independent app, use a new clone. To rotate a provider key, run `npx deepspace@latest secrets set KEY --stdin`, enter the value via stdin, and redeploy. `npx deepspace@latest secrets list --only-names` shows which keys are set without displaying values.
 
-```text
-TAVUS_API_KEY=...
-GOOGLE_GENERATIVE_AI_API_KEY=...
-```
+### Use your own domain
 
-Never place credentials in browser code, commits, or the README. DeepSpace loads them as server-side bindings for the Cloudflare Worker.
-
-## Deploy
+The `*.app.space` URL works immediately. If you already own another domain, attach it after deployment:
 
 ```sh
-npx deepspace deploy
+npx deepspace@latest app domain attach interview.example.com --external
 ```
 
-The deployed subdomain is set by `name` in [`wrangler.toml`](./wrangler.toml). The current production target is [dialogue-interview-neel.app.space](https://dialogue-interview-neel.app.space).
+DeepSpace first returns a TXT ownership record to add at your registrar. After that propagates, run `npx deepspace@latest app domain verify interview.example.com`. Add any returned routing/certificate records, repeat `verify` until active, and check `npx deepspace@latest app domain status interview.example.com`. Domain purchase, DNS access, and propagation cannot be automated from this repository. See the [DeepSpace custom-domain guide](https://docs.deep.space/guides/custom-domains) for current steps.
+
+### Optional local development
+
+Local development is **not** required to keep a deployed app running. If you want it, first run the setup above or initialize your own app ID and secrets, then:
+
+```sh
+npx deepspace@latest auth login
+npx deepspace@latest dev start
+```
+
+DeepSpace generates `.dev.vars` as a local cache of the secrets store; it is ignored by Git. Do not edit it as the source of production secrets. The currently deployed project is [dialogue-interview-neel.app.space](https://dialogue-interview-neel.app.space); its identity in the template exists only so maintainers can redeploy that original instance, and the first-time setup script replaces it for a copy.
 
 ## Repository notes
 

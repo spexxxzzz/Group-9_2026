@@ -42,7 +42,8 @@ APP_NAME = "dialogue-interview-neel"
 port = 8780
 inspector_port = 9237
 
-# Secrets (set via `wrangler secret put` or written by `deepspace dev`):
+# SDK-managed auth bindings are provisioned by DeepSpace. User API keys belong
+# in the DeepSpace secrets store (see README), not in this file.
 #   AUTH_JWT_PUBLIC_KEY
 #   AUTH_JWT_ISSUER
 #   AUTH_WORKER_URL
