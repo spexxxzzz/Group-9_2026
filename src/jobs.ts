@@ -18,6 +18,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import type { Job, JobContext } from 'deepspace/worker'
 import type { Env } from '../worker'
 import { callTavus } from './lib/tavus-server'
+import { tavusKeyForConversation } from './lib/tavus-key-pool'
 import {
   BEHAVIORAL_CRITERIA,
   behavioralScore,
@@ -125,6 +126,7 @@ async function pollTranscript(
   env: Env,
   ctx: JobContext,
   conversationId: string,
+  apiKey: string,
 ): Promise<TranscriptResult> {
   let turns: TranscriptTurn[] = []
   let perceptionAnalysis: string | undefined
@@ -133,7 +135,7 @@ async function pollTranscript(
     if (ctx.signal.aborted) throw new Error('canceled')
     const conversation = await callTavus(env, 'get-conversation', {
       conversation_id: conversationId,
-    })
+    }, apiKey)
     turns = extractTranscript(conversation)
     perceptionAnalysis ??= extractPerceptionAnalysis(conversation)
     if (substantiveAnswers(turns) > 0) {
@@ -514,7 +516,8 @@ export async function runJob(job: Job, ctx: JobContext, env: Env): Promise<unkno
 
     // ── Phase 1: fast summary (skip if a partial report already exists) ──────
     if (!reportId) {
-      const transcript = await pollTranscript(env, ctx, conversationId)
+      const apiKey = await tavusKeyForConversation(env, conversationId)
+      const transcript = await pollTranscript(env, ctx, conversationId, apiKey)
       input.turns = transcript.turns
       input.perceptionAnalysis = transcript.perceptionAnalysis
 

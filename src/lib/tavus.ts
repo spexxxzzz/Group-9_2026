@@ -312,6 +312,7 @@ export interface StartConversationOpts {
 
 export interface StartedConversation {
   personaId: string
+  replicaId: string
   conversationId: string
   conversationUrl: string
   /** Tavus counts its five-minute cap from creation, not browser join. */
@@ -336,7 +337,9 @@ export async function startConversation(opts: StartConversationOpts): Promise<St
       : undefined
 
   const persona = unwrap(
-    await tavusPost<{ persona_id: string }>('create-persona', {
+    await tavusPost<{ persona_id: string; replica_id?: string }>('create-persona', {
+      interview_id: opts.interviewId,
+      callback_token: opts.callbackToken,
       persona_name: `${role} interviewer`,
       pipeline_mode: 'full',
       system_prompt: buildSystemPrompt(role, interviewType, { difficulty, problem }, jobDescription, resumeText, durationMinutes),
@@ -379,7 +382,7 @@ export async function startConversation(opts: StartConversationOpts): Promise<St
 
   const conversation = unwrap(
     await tavusPost<{ conversation_id: string; conversation_url: string; created_at?: string }>('create-conversation', {
-      replica_id: replicaId,
+      replica_id: persona.replica_id ?? replicaId,
       persona_id: persona.persona_id,
       conversation_name: `${role} mock interview`,
       interview_id: opts.interviewId,
@@ -403,6 +406,7 @@ export async function startConversation(opts: StartConversationOpts): Promise<St
 
   return {
     personaId: persona.persona_id,
+    replicaId: persona.replica_id ?? replicaId,
     conversationId: conversation.conversation_id,
     conversationUrl: conversation.conversation_url,
     conversationStartedAt: Number.isFinite(Date.parse(conversation.created_at ?? ''))

@@ -10,6 +10,7 @@
     "deploy": "npx --yes deepspace@latest deploy",
     "setup:deploy": "bash scripts/setup-deploy.sh",
     "deploy:app": "bash scripts/redeploy.sh",
+    "tavus:keys": "bash scripts/configure-tavus-keys.sh",
     "undeploy": "deepspace undeploy",
     "add": "deepspace add",
     "test": "deepspace test",

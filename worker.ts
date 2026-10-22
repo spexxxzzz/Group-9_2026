@@ -28,7 +28,17 @@ import { runJob } from './src/jobs.js'
 import { schemas } from './src/schemas.js'
 import { integrations } from './src/integrations.js'
 import { registerAiChatRoutes } from './src/ai/chat-routes.js'
-import { callTavus, type TavusOperation } from './src/lib/tavus-server.js'
+import { callTavus, TavusApiError, tavusKeyIsUnusable, type TavusOperation } from './src/lib/tavus-server.js'
+import {
+  chooseTavusSlot,
+  configuredTavusSlots,
+  MAX_CONVERSATIONS_PER_KEY,
+  tavusKeyForConversation,
+  tavusKeyForSlot,
+  tavusPoolAction,
+  type SlotUsage,
+  type TavusAssignment,
+} from './src/lib/tavus-key-pool.js'
 import type { Interview } from './src/types.js'
 
 // =============================================================================
@@ -42,6 +52,7 @@ export const __DO_MANIFEST__ = [
   { binding: 'PRESENCE_ROOMS', className: 'AppPresenceRoom', sqlite: true },
   { binding: 'CRON_ROOMS', className: 'AppCronRoom', sqlite: true },
   { binding: 'JOB_ROOMS', className: 'AppJobRoom', sqlite: true },
+  { binding: 'TAVUS_KEY_POOL', className: 'AppTavusKeyPoolRoom', sqlite: true },
 ] as const satisfies DOManifest
 
 // =============================================================================
@@ -96,6 +107,160 @@ export class AppJobRoom extends JobRoom<Env> {
   }
 }
 
+type PoolRow = {
+  interview_id: string
+  slot: number
+  state: TavusAssignment['state']
+  persona_id: string | null
+  replica_id: string | null
+  conversation_id: string | null
+  conversation_url: string | null
+  conversation_created_at: string | null
+}
+
+function publicAssignment(row: PoolRow): TavusAssignment {
+  return {
+    interviewId: row.interview_id,
+    slot: row.slot,
+    state: row.state,
+    ...(row.persona_id ? { personaId: row.persona_id } : {}),
+    ...(row.replica_id ? { replicaId: row.replica_id } : {}),
+    ...(row.conversation_id ? { conversationId: row.conversation_id } : {}),
+    ...(row.conversation_url ? { conversationUrl: row.conversation_url } : {}),
+    ...(row.conversation_created_at ? { conversationCreatedAt: row.conversation_created_at } : {}),
+  }
+}
+
+/** One per app: atomically reserves slots and tracks successful call starts. */
+export class AppTavusKeyPoolRoom {
+  constructor(private readonly state: DurableObjectState, _env: Env) {
+    const sql = state.storage.sql
+    sql.exec(`CREATE TABLE IF NOT EXISTS key_usage (
+      slot INTEGER PRIMARY KEY, used INTEGER NOT NULL DEFAULT 0,
+      disabled INTEGER NOT NULL DEFAULT 0,
+      cooldown_until INTEGER NOT NULL DEFAULT 0
+    )`)
+    sql.exec(`CREATE TABLE IF NOT EXISTS assignments (
+      interview_id TEXT PRIMARY KEY, slot INTEGER NOT NULL,
+      state TEXT NOT NULL, persona_id TEXT, replica_id TEXT,
+      conversation_id TEXT UNIQUE, conversation_url TEXT,
+      conversation_created_at TEXT, reserved_at INTEGER NOT NULL
+    )`)
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    try {
+      const input = await request.json() as Record<string, unknown>
+      const action = String(input.action ?? '')
+      const interviewId = typeof input.interviewId === 'string' ? input.interviewId : ''
+      const conversationId = typeof input.conversationId === 'string' ? input.conversationId : ''
+      const sql = this.state.storage.sql
+      const get = (id: string) => sql.exec<PoolRow>(
+        'SELECT * FROM assignments WHERE interview_id = ?', id,
+      ).toArray()[0]
+
+      if (action === 'by-conversation') {
+        const row = sql.exec<PoolRow>(
+          'SELECT * FROM assignments WHERE conversation_id = ?', conversationId,
+        ).toArray()[0]
+        return Response.json({ data: row ? publicAssignment(row) : { found: false } })
+      }
+      if (action === 'by-interview') {
+        const row = get(interviewId)
+        return Response.json({ data: row ? publicAssignment(row) : { found: false } })
+      }
+      if (!interviewId && action !== 'status') throw new Error('Missing interview ID')
+
+      const result = this.state.storage.transactionSync(() => {
+        if (action === 'reserve' || action === 'status') {
+          const slots = Array.isArray(input.slots)
+            ? input.slots.filter((slot): slot is number => Number.isInteger(slot) && slot >= 1 && slot <= 10)
+            : []
+          if (!slots.length) throw new Error('No Tavus keys configured')
+          if (action === 'reserve') {
+            // A half-finished persona does not consume a call forever.
+            sql.exec("DELETE FROM assignments WHERE state IN ('reserved', 'persona-creating') AND reserved_at < ?", Date.now() - 30 * 60_000)
+            const existing = get(interviewId)
+            if (existing) return publicAssignment(existing)
+          }
+          const usage: SlotUsage[] = slots.map((slot) => {
+            sql.exec('INSERT OR IGNORE INTO key_usage (slot) VALUES (?)', slot)
+            const row = sql.exec<{ used: number; disabled: number; cooldown_until: number }>(
+              'SELECT used, disabled, cooldown_until FROM key_usage WHERE slot = ?', slot,
+            ).toArray()[0]
+            const pending = sql.exec<{ count: number }>(
+              "SELECT COUNT(*) AS count FROM assignments WHERE slot = ? AND state IN ('reserved', 'persona-creating', 'creating')", slot,
+            ).toArray()[0]?.count ?? 0
+            return { slot, used: row.used, pending, disabled: Boolean(row.disabled), cooldownUntil: row.cooldown_until }
+          })
+          if (action === 'status') return usage
+          const slot = chooseTavusSlot(usage, MAX_CONVERSATIONS_PER_KEY)
+          if (slot === null) throw new Error('All configured Tavus keys have reached their interview limit')
+          sql.exec(
+            "INSERT INTO assignments (interview_id, slot, state, reserved_at) VALUES (?, ?, 'reserved', ?)",
+            interviewId, slot, Date.now(),
+          )
+          return publicAssignment(get(interviewId))
+        }
+
+        const existing = get(interviewId)
+        if (!existing) throw new Error('No Tavus key reserved for this interview')
+        if (action === 'begin-persona') {
+          if (existing.persona_id) return publicAssignment(existing)
+          if (existing.state !== 'reserved') throw new Error('This interview is already starting')
+          sql.exec("UPDATE assignments SET state = 'persona-creating' WHERE interview_id = ?", interviewId)
+          return publicAssignment(get(interviewId))
+        }
+        if (action === 'save-persona') {
+          if (existing.persona_id) return publicAssignment(existing)
+          if (existing.state !== 'persona-creating') throw new Error('Persona was not reserved')
+          const personaId = typeof input.personaId === 'string' ? input.personaId : ''
+          const replicaId = typeof input.replicaId === 'string' ? input.replicaId : ''
+          if (!personaId || !replicaId) throw new Error('Persona and replica are required')
+          sql.exec("UPDATE assignments SET persona_id = ?, replica_id = ?, state = 'reserved' WHERE interview_id = ?",
+            personaId, replicaId, interviewId)
+          return publicAssignment(get(interviewId))
+        }
+        if (action === 'begin-conversation') {
+          if (existing.state === 'active') return publicAssignment(existing)
+          if (existing.state === 'creating') throw new Error('This interview is already starting')
+          if (existing.state !== 'reserved') throw new Error('Persona is still being prepared')
+          if (!existing.persona_id) throw new Error('Persona is not ready')
+          sql.exec("UPDATE assignments SET state = 'creating' WHERE interview_id = ?", interviewId)
+          return publicAssignment(get(interviewId))
+        }
+        if (action === 'save-conversation') {
+          if (existing.state === 'active') return publicAssignment(existing)
+          if (existing.state !== 'creating') throw new Error('Conversation was not reserved')
+          const url = typeof input.conversationUrl === 'string' ? input.conversationUrl : ''
+          const createdAt = typeof input.conversationCreatedAt === 'string' ? input.conversationCreatedAt : ''
+          if (!conversationId || !url) throw new Error('Conversation details are incomplete')
+          sql.exec(`UPDATE assignments SET state = 'active', conversation_id = ?,
+            conversation_url = ?, conversation_created_at = ? WHERE interview_id = ?`,
+            conversationId, url, createdAt, interviewId)
+          sql.exec('UPDATE key_usage SET used = used + 1 WHERE slot = ?', existing.slot)
+          return publicAssignment(get(interviewId))
+        }
+        if (action === 'release') {
+          if (existing.state === 'active') throw new Error('Started conversations cannot be released')
+          if (input.disable === true) sql.exec('UPDATE key_usage SET disabled = 1 WHERE slot = ?', existing.slot)
+          const cooldownSeconds = typeof input.cooldownSeconds === 'number'
+            ? Math.min(300, Math.max(0, input.cooldownSeconds)) : 0
+          if (cooldownSeconds) {
+            sql.exec('UPDATE key_usage SET cooldown_until = ? WHERE slot = ?', Date.now() + cooldownSeconds * 1_000, existing.slot)
+          }
+          sql.exec('DELETE FROM assignments WHERE interview_id = ?', interviewId)
+          return { released: true, slot: existing.slot }
+        }
+        throw new Error('Unsupported key-pool action')
+      })
+      return Response.json({ data: result })
+    } catch (error) {
+      return Response.json({ error: error instanceof Error ? error.message : 'Key pool error' }, { status: 400 })
+    }
+  }
+}
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -140,7 +305,18 @@ export interface Env extends DOBindings<typeof __DO_MANIFEST__> {
    */
   APP_OWNER_JWT: string
   /** Tavus credential, stored as a server-side DeepSpace secret. */
-  TAVUS_API_KEY: string
+  TAVUS_API_KEY?: string
+  /** Optional independently authorized Tavus accounts; configured in secrets store. */
+  TAVUS_API_KEY_1?: string
+  TAVUS_API_KEY_2?: string
+  TAVUS_API_KEY_3?: string
+  TAVUS_API_KEY_4?: string
+  TAVUS_API_KEY_5?: string
+  TAVUS_API_KEY_6?: string
+  TAVUS_API_KEY_7?: string
+  TAVUS_API_KEY_8?: string
+  TAVUS_API_KEY_9?: string
+  TAVUS_API_KEY_10?: string
   /** Gemini credential, stored as a server-side DeepSpace secret. */
   GOOGLE_GENERATIVE_AI_API_KEY: string
   /**
@@ -409,6 +585,27 @@ const tavusOperations = new Set<TavusOperation>([
   'end-conversation',
 ])
 
+/** Owner-only usage overview. Never returns key values or provider responses. */
+app.get('/api/admin/tavus-pool', async (c) => {
+  const auth = await resolveAuth(c.req.raw, c.env)
+  if (!auth || auth.userId !== c.env.OWNER_USER_ID) return c.json({ error: 'Forbidden' }, 403)
+  const slots = configuredTavusSlots(c.env)
+  if (!slots.length) return c.json({ mode: 'single-key', slots: [] })
+  try {
+    const usage = await tavusPoolAction<SlotUsage[]>(c.env, 'status', { slots })
+    return c.json({
+      mode: 'pool',
+      limitPerKey: MAX_CONVERSATIONS_PER_KEY,
+      slots: usage.map(({ slot, used, pending, disabled, cooldownUntil }) => ({
+        slot, used, pending, disabled, cooldownUntil,
+        available: !disabled && used + pending < MAX_CONVERSATIONS_PER_KEY && (cooldownUntil ?? 0) <= Date.now(),
+      })),
+    })
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Key pool unavailable' }, 502)
+  }
+})
+
 const CODING_DIFFICULTY: Record<string, string> = {
   intern: 'LeetCode EASY to lower-MEDIUM. One straightforward data structure; clean, direct logic.',
   junior: 'LeetCode MEDIUM. One non-obvious insight or data-structure choice.',
@@ -499,20 +696,116 @@ app.post('/api/tavus/:operation', async (c) => {
 
   try {
     const params = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
-    if (operation === 'create-conversation') {
+    const slots = configuredTavusSlots(c.env)
+    const poolEnabled = slots.length > 0
+
+    if (operation === 'list-replicas') {
+      if (!poolEnabled) return c.json({ success: true, data: await callTavus(c.env, 'list-replicas', params) })
+      let lastError: unknown
+      for (const slot of slots) {
+        try {
+          return c.json({ success: true, data: await callTavus(c.env, 'list-replicas', params, tavusKeyForSlot(c.env, slot)) })
+        } catch (error) {
+          lastError = error
+        }
+      }
+      throw lastError || new Error('No Tavus key could list replicas')
+    }
+
+    if (operation === 'create-persona' || operation === 'create-conversation') {
       const interviewId = typeof params.interview_id === 'string' ? params.interview_id : ''
       const callbackToken = typeof params.callback_token === 'string' ? params.callback_token : ''
-      if (interviewId && callbackToken) {
-        const interview = await getInterviewRecord(c.env, interviewId)
-        if (interview.createdBy !== auth.userId || interview.data.callbackToken !== callbackToken) {
-          return c.json({ success: false, error: 'Interview access denied' }, 403)
-        }
+      if (!interviewId || !callbackToken) {
+        return c.json({ success: false, error: 'Interview credentials are required' }, 400)
+      }
+      const interview = await getInterviewRecord(c.env, interviewId)
+      if (interview.createdBy !== auth.userId || interview.data.callbackToken !== callbackToken) {
+        return c.json({ success: false, error: 'Interview access denied' }, 403)
+      }
+      if (interview.data.status !== 'created' && !interview.data.conversationId) {
+        return c.json({ success: false, error: 'Interview has already started' }, 409)
+      }
+      if (operation === 'create-conversation') {
         params.callback_url = `${new URL(c.req.url).origin}/api/tavus/callback/${encodeURIComponent(interviewId)}/${encodeURIComponent(callbackToken)}`
       }
       delete params.interview_id
       delete params.callback_token
+
+      if (!poolEnabled) {
+        return c.json({ success: true, data: await callTavus(c.env, operation, params) })
+      }
+
+      if (operation === 'create-persona') {
+        let assignment = await tavusPoolAction<TavusAssignment>(c.env, 'reserve', { interviewId, slots })
+        if (assignment.personaId && assignment.replicaId) {
+          return c.json({ success: true, data: { persona_id: assignment.personaId, replica_id: assignment.replicaId } })
+        }
+        assignment = await tavusPoolAction<TavusAssignment>(c.env, 'begin-persona', { interviewId })
+        const key = tavusKeyForSlot(c.env, assignment.slot)
+        try {
+          const listed = await callTavus(c.env, 'list-replicas', { replica_type: 'system', limit: 50 }, key) as {
+            data?: Array<{ replica_id?: string; status?: string }>
+          }
+          const ready = (listed.data ?? []).filter((r) => r.replica_id && (r.status === 'ready' || r.status === 'completed'))
+          const requested = typeof params.default_replica_id === 'string' ? params.default_replica_id : ''
+          const replicaId = ready.find((r) => r.replica_id === requested)?.replica_id ?? ready[0]?.replica_id
+          if (!replicaId) throw new Error('No ready Tavus replica is available on the assigned account')
+          params.default_replica_id = replicaId
+          const created = await callTavus(c.env, 'create-persona', params, key) as { persona_id: string }
+          await tavusPoolAction(c.env, 'save-persona', { interviewId, personaId: created.persona_id, replicaId })
+          return c.json({ success: true, data: { ...created, replica_id: replicaId } })
+        } catch (error) {
+          await tavusPoolAction(c.env, 'release', {
+            interviewId,
+            disable: tavusKeyIsUnusable(error) ||
+              (error instanceof Error && error.message.includes('No ready Tavus replica')),
+            cooldownSeconds: error instanceof TavusApiError && error.status === 429 ? 60 : 0,
+          })
+          throw error
+        }
+      }
+
+      const assignment = await tavusPoolAction<TavusAssignment>(c.env, 'begin-conversation', { interviewId })
+      if (assignment.state === 'active') {
+        return c.json({ success: true, data: {
+          conversation_id: assignment.conversationId,
+          conversation_url: assignment.conversationUrl,
+          created_at: assignment.conversationCreatedAt,
+        } })
+      }
+      const key = tavusKeyForSlot(c.env, assignment.slot)
+      params.replica_id = assignment.replicaId
+      params.persona_id = assignment.personaId
+      try {
+        const created = await callTavus(c.env, 'create-conversation', params, key) as {
+          conversation_id: string; conversation_url: string; created_at?: string
+        }
+        await tavusPoolAction(c.env, 'save-conversation', {
+          interviewId,
+          conversationId: created.conversation_id,
+          conversationUrl: created.conversation_url,
+          conversationCreatedAt: created.created_at ?? new Date().toISOString(),
+        })
+        return c.json({ success: true, data: created })
+      } catch (error) {
+        // A network failure is ambiguous: the provider may have created a
+        // billable room. Keep its reservation rather than silently retrying.
+        if (error instanceof TavusApiError && error.status < 500 && error.status !== 408) {
+          await tavusPoolAction(c.env, 'release', {
+            interviewId,
+            disable: tavusKeyIsUnusable(error),
+            cooldownSeconds: error.status === 429 ? 60 : 0,
+          })
+        }
+        throw error
+      }
     }
-    const data = await callTavus(c.env, operation as TavusOperation, params)
+
+    const conversationId = typeof params.conversation_id === 'string' ? params.conversation_id : ''
+    const key = poolEnabled && conversationId
+      ? await tavusKeyForConversation(c.env, conversationId)
+      : undefined
+    const data = await callTavus(c.env, operation as TavusOperation, params, key)
     return c.json({ success: true, data })
   } catch (error) {
     return c.json({ success: false, error: error instanceof Error ? error.message : 'Tavus request failed' }, 502)
@@ -585,7 +878,8 @@ app.post('/api/interviews/:id/finish', async (c) => {
     }
     const jobId = await ensureInterviewScoring(c.env, interviewId)
     try {
-      await callTavus(c.env, 'end-conversation', { conversation_id: interview.data.conversationId })
+      const key = await tavusKeyForConversation(c.env, interview.data.conversationId)
+      await callTavus(c.env, 'end-conversation', { conversation_id: interview.data.conversationId }, key)
     } catch {
       // Tavus may already have closed the room at its duration limit.
     }

@@ -10,12 +10,28 @@ export type TavusOperation =
   | 'get-conversation'
   | 'end-conversation'
 
+export class TavusApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = 'TavusApiError'
+  }
+}
+
+/** Only disable credentials for clear account/allowance failures, not transient 429s. */
+export function tavusKeyIsUnusable(error: unknown): boolean {
+  if (!(error instanceof TavusApiError)) return false
+  if ([401, 402, 403].includes(error.status)) return true
+  return /quota|credit|balance|allowance|monthly|billing|plan limit/i.test(error.message)
+}
+
 export async function callTavus(
   env: Pick<Env, 'TAVUS_API_KEY'>,
   operation: TavusOperation,
   params: Record<string, unknown> = {},
+  apiKey?: string,
 ): Promise<unknown> {
-  if (!env.TAVUS_API_KEY) throw new Error('Tavus is not configured')
+  const key = apiKey || env.TAVUS_API_KEY
+  if (!key) throw new Error('Tavus is not configured')
 
   let method = 'POST'
   let path = ''
@@ -56,14 +72,19 @@ export async function callTavus(
 
   const response = await fetch(`${TAVUS_API_URL}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json', 'x-api-key': env.TAVUS_API_KEY },
+    headers: { 'Content-Type': 'application/json', 'x-api-key': key },
     body,
   })
   const text = await response.text()
-  const data = text ? JSON.parse(text) : {}
+  let data: Record<string, unknown>
+  try {
+    data = text ? JSON.parse(text) as Record<string, unknown> : {}
+  } catch {
+    data = { message: text.slice(0, 300) }
+  }
   if (!response.ok) {
     const message = typeof data?.message === 'string' ? data.message : typeof data?.error === 'string' ? data.error : `Tavus request failed (HTTP ${response.status})`
-    throw new Error(message)
+    throw new TavusApiError(message, response.status)
   }
   return data
 }

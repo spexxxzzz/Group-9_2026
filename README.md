@@ -107,6 +107,12 @@ This repository includes the application and its deployment scripts. You need No
 
 The required server-side secret names are `TAVUS_API_KEY` and `GOOGLE_GENERATIVE_AI_API_KEY`. The setup script uses `deepspace secrets set ... --stdin`; it does not write their values to tracked files or command arguments. Never commit `.dev.vars`, tokens, or secrets. The app name and app ID are not credentials, but they identify the deployment target.
 
+### Optional Tavus key pool
+
+For accounts that are authorized to be used together, the backend can use up to ten Tavus keys. From a checkout targeting your app, run `npm run tavus:keys -- 10` (or a smaller number). The script privately prompts for each value and stores it as `TAVUS_API_KEY_1` through `TAVUS_API_KEY_10` in DeepSpace; then deploy again. The original `TAVUS_API_KEY` remains the fallback for interviews created before the pool was enabled. Key values are never stored in interview records or sent to the browser.
+
+The per-app Tavus key-pool Durable Object tracks successful conversation starts and in-flight reservations. It chooses the slot with the fewest starts/reservations, so every available slot gets one turn before any gets a second, and stops assigning a slot after five starts or a provider-reported account/allowance failure. All operations for a given interview use its assigned key. The app owner can inspect counts (not credentials) at `GET /api/admin/tavus-pool` while signed in. These are **application-side counts**, not Tavus's authoritative minute balance; multiple keys from one Tavus account still share that account's allowance. The counters do not automatically reset: only add accounts and adjust capacity in line with Tavus's actual quota and your authorization.
+
 To deploy later code changes from the same checkout, run:
 
 ```sh

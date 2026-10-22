@@ -100,6 +100,7 @@ export default function InterviewLivePage() {
         })
         await put(interview.recordId, {
           personaId: conv.personaId,
+          replicaId: conv.replicaId,
           conversationId: conv.conversationId,
           conversationUrl: conv.conversationUrl,
           conversationStartedAt: conv.conversationStartedAt,

@@ -13,6 +13,10 @@ run_worker_first = ["/api/*", "/ws/*", "/internal/*", "/v1/*", "/_deepspace/*"]
 tag = "v1"
 new_sqlite_classes = ["AppRecordRoom", "AppYjsRoom", "AppCanvasRoom", "AppPresenceRoom", "AppCronRoom", "AppJobRoom"]
 
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["AppTavusKeyPoolRoom"]
+
 [durable_objects]
 bindings = [
   { name = "RECORD_ROOMS", class_name = "AppRecordRoom" },
@@ -21,6 +25,7 @@ bindings = [
   { name = "PRESENCE_ROOMS", class_name = "AppPresenceRoom" },
   { name = "CRON_ROOMS", class_name = "AppCronRoom" },
   { name = "JOB_ROOMS", class_name = "AppJobRoom" },
+  { name = "TAVUS_KEY_POOL", class_name = "AppTavusKeyPoolRoom" },
 ]
 
 # For per-app resources (D1, KV, Vectorize, R2, Queues), set the id field to
